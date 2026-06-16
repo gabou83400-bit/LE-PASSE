@@ -40,22 +40,47 @@ function parseJsonLoose(text) {
 function compressImage(file, maxDim = 1568, quality = 0.82) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Lecture impossible"));
+    reader.onerror = () => reject(new Error("Lecture du fichier impossible"));
     reader.onload = () => {
       const img = new Image();
-      img.onerror = () => reject(new Error("Image illisible"));
+      img.onerror = () => reject(new Error("Image illisible — essaie une photo plus nette ou un autre format"));
       img.onload = () => {
-        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", quality).split(",")[1]);
+        try {
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(img.width * scale));
+          canvas.height = Math.max(1, Math.round(img.height * scale));
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", quality).split(",")[1]);
+        } catch (e) { reject(new Error("Conversion de l'image impossible")); }
       };
       img.src = reader.result;
     };
     reader.readAsDataURL(file);
   });
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Lecture du fichier impossible"));
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.readAsDataURL(file);
+  });
+}
+
+// Prépare un fichier (image ou PDF) pour l'API : renvoie un bloc "image" ou "document".
+async function prepareFileBlock(file) {
+  const name = (file.name || "").toLowerCase();
+  const type = file.type || "";
+  const isPdf = type === "application/pdf" || name.endsWith(".pdf");
+  if (isPdf) {
+    const data = await fileToBase64(file);
+    return { type: "document", source: { type: "base64", media_type: "application/pdf", data } };
+  }
+  // tout le reste : on passe par le canvas (gère jpeg, png, webp, gif, et heic décodé par le navigateur)
+  const data = await compressImage(file);
+  return { type: "image", source: { type: "base64", media_type: "image/jpeg", data } };
 }
 
 // ————— blindage : validation des données chargées —————
@@ -651,11 +676,11 @@ function AppInner() {
     if (!file || dishScanBusy) return;
     setDishScanBusy(true); setDishScanMsg(""); setDishScanItems(null);
     try {
-      const b64 = await compressImage(file);
+      const fileBlock = await prepareFileBlock(file);
       const text = await askClaude([{
         role: "user",
         content: [
-          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
+          fileBlock,
           { type: "text", text: 'Voici la photo de la carte des PLATS d\'un restaurant. Extrais chaque plat avec son nom et son prix de vente TTC en euros. Ignore les boissons et les cocktails. Reponds UNIQUEMENT avec ce JSON, sans texte autour :\n{"items":[{"name":"...","price":14.0}]}' },
         ],
       }], false);
@@ -664,7 +689,7 @@ function AppInner() {
       if (items.length === 0) throw new Error("vide");
       setDishScanItems(items);
     } catch {
-      setDishScanMsg("Lecture impossible — reprends la photo bien à plat, nette, cadrée sur les plats.");
+      setDishScanMsg("Lecture impossible. Vérifie que l\u2019assistant IA est activé (clé API), puis réessaie avec une photo nette ou un PDF.");
     }
     setDishScanBusy(false);
     if (dishScanInput.current) dishScanInput.current.value = "";
@@ -708,11 +733,11 @@ function AppInner() {
     if (!file || invoiceBusy) return;
     setInvoiceBusy(true); setInvoiceMsg(""); setInvoiceItems(null);
     try {
-      const b64 = await compressImage(file);
+      const fileBlock = await prepareFileBlock(file);
       const text = await askClaude([{
         role: "user",
         content: [
-          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
+          fileBlock,
           { type: "text", text: `Voici la photo d'une facture ou d'un bon de livraison fournisseur d'un bar-restaurant. Extrais chaque ligne de produit BOISSON ou LIQUIDE (spiritueux, liqueurs, vins, bieres, softs, sirops). Ignore frais de port, consignes, remises globales.\nPour chaque produit : nom court et lisible, quantite en nombre de bouteilles/unites, contenance en cl (70 si bouteille standard non precisee, 75 pour vin, 33 pour biere bouteille), prix unitaire HT en euros (si seul le prix du carton figure, divise par le nombre d'unites), categorie parmi: Spiritueux, Liqueur, Vin, Biere, Softs, Autre. Indique aussi le nom du fournisseur si visible sur la facture.\nReponds UNIQUEMENT avec ce JSON, sans texte autour:\n{"supplier":"...","items":[{"name":"...","qty":6,"volumeCl":70,"unitPriceHT":12.50,"cat":"Spiritueux"}]}` },
         ],
       }], false);
@@ -728,7 +753,7 @@ function AppInner() {
       if (items.length === 0) throw new Error("vide");
       setInvoiceItems({ supplier: String(parsed.supplier || "").slice(0, 40), items });
     } catch (e) {
-      setInvoiceMsg("Lecture impossible — reprends la photo bien a plat, nette et eclairee, ou rapproche-toi des lignes produits.");
+      setInvoiceMsg("Lecture impossible. Causes possibles : assistant IA non activé (clé API) ou image floue. Réessaie avec une photo nette, bien à plat, ou un PDF.");
     }
     setInvoiceBusy(false);
     if (invoiceInput.current) invoiceInput.current.value = "";
@@ -762,11 +787,11 @@ function AppInner() {
     if (!file || recScanBusy) return;
     setRecScanBusy(true); setRecScanMsg(""); setRecScanItems(null);
     try {
-      const b64 = await compressImage(file);
+      const fileBlock = await prepareFileBlock(file);
       const text = await askClaude([{
         role: "user",
         content: [
-          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
+          fileBlock,
           { type: "text", text: 'Voici la photo d\'un bon de livraison ou d\'une facture de denrees alimentaires (legumes, viandes, produits frais, epicerie) pour un restaurant. Extrais chaque produit pour le registre de tracabilite : nom court, numero de lot si visible (sinon vide), DLC ou DDM si visible au format AAAA-MM-JJ (sinon vide). Indique le fournisseur si visible. Ignore les boissons, frais de port et remises. Reponds UNIQUEMENT avec ce JSON, sans texte autour :\n{"supplier":"...","items":[{"product":"...","lot":"...","dlc":"2026-06-20"}]}' },
         ],
       }], false);
@@ -780,7 +805,7 @@ function AppInner() {
       if (items.length === 0) throw new Error("vide");
       setRecScanItems({ supplier: String(parsed.supplier || "").slice(0, 40), items });
     } catch {
-      setRecScanMsg("Lecture impossible — photo bien a plat, nette, cadree sur les lignes produits.");
+      setRecScanMsg("Lecture impossible. Vérifie que l\u2019assistant IA est activé (clé API), puis réessaie avec une photo nette ou un PDF.");
     }
     setRecScanBusy(false);
     if (recScanInput.current) recScanInput.current.value = "";
@@ -1174,7 +1199,7 @@ function AppInner() {
                 <button onClick={() => invoiceInput.current?.click()} disabled={invoiceBusy} style={{ ...btn("p"), opacity: invoiceBusy ? 0.6 : 1 }}>
                   {invoiceBusy ? "Lecture en cours…" : "Prendre la photo"}
                 </button>
-                <input ref={invoiceInput} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+                <input ref={invoiceInput} type="file" accept="image/*,application/pdf" style={{ display: "none" }}
                   onChange={(e) => scanInvoice(e.target.files?.[0])} />
               </div>
               {invoiceMsg && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 10 }}>{invoiceMsg}</div>}
@@ -1371,7 +1396,7 @@ function AppInner() {
                 <button onClick={() => dishScanInput.current?.click()} disabled={dishScanBusy} style={{ ...btn("p"), opacity: dishScanBusy ? 0.6 : 1 }}>
                   {dishScanBusy ? "Lecture…" : "Prendre la photo"}
                 </button>
-                <input ref={dishScanInput} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => scanDishMenu(e.target.files?.[0])} />
+                <input ref={dishScanInput} type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => scanDishMenu(e.target.files?.[0])} />
               </div>
               {dishScanMsg && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 10 }}>{dishScanMsg}</div>}
               {dishScanItems && (
@@ -1613,7 +1638,7 @@ function AppInner() {
                 <button onClick={() => recScanInput.current?.click()} disabled={recScanBusy} style={{ ...btn("p"), opacity: recScanBusy ? 0.6 : 1 }}>
                   {recScanBusy ? "Lecture en cours…" : "Prendre la photo"}
                 </button>
-                <input ref={recScanInput} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+                <input ref={recScanInput} type="file" accept="image/*,application/pdf" style={{ display: "none" }}
                   onChange={(e) => scanReception(e.target.files?.[0])} />
               </div>
               {recScanMsg && <div style={{ fontSize: 12.5, color: C.sub, marginTop: 10 }}>{recScanMsg}</div>}
