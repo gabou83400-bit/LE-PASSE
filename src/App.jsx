@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 
-// ————— stockage local (autonome, hors Claude) —————
+// ————— stockage local (autonome, hors Claude) — écriture synchrone, fiable —————
 const storage = {
-  async get(key) { const v = localStorage.getItem(key); return v == null ? null : { key, value: v }; },
-  async set(key, value) { localStorage.setItem(key, value); return { key, value }; },
+  async get(key) { try { const v = localStorage.getItem(key); return v == null ? null : { key, value: v }; } catch { return null; } },
+  async set(key, value) { try { localStorage.setItem(key, value); } catch {} return { key, value }; },
 };
 
 
@@ -466,19 +466,38 @@ function AppInner() {
       setLoaded(true);
     })();
   }, []);
-  // sauvegarde différée (évite les écritures à chaque frappe) + copie de secours quotidienne
-  useEffect(() => {
-    if (!loaded) return;
-    const t = setTimeout(() => {
-      const json = JSON.stringify(data);
+  // sauvegarde : immédiate (anti-perte) + copie de secours quotidienne + flush avant fermeture
+  const saveNow = (d) => {
+    try {
+      const json = JSON.stringify(d);
       storage.set("lepasse-v4", json).catch(() => {});
       const day = today();
       if (lastBackupDay.current !== day) {
         lastBackupDay.current = day;
         storage.set("lepasse-backup", json).catch(() => {});
       }
-    }, 700);
-    return () => clearTimeout(t);
+    } catch {}
+  };
+  useEffect(() => {
+    if (!loaded) return;
+    saveNow(data);
+  }, [data, loaded]);
+  // filet de sécurité : si l'appli est masquée ou fermée, on force l'enregistrement
+  useEffect(() => {
+    if (!loaded) return;
+    const flush = () => saveNow(data);
+    try {
+      window.addEventListener("visibilitychange", flush);
+      window.addEventListener("pagehide", flush);
+      window.addEventListener("beforeunload", flush);
+    } catch {}
+    return () => {
+      try {
+        window.removeEventListener("visibilitychange", flush);
+        window.removeEventListener("pagehide", flush);
+        window.removeEventListener("beforeunload", flush);
+      } catch {}
+    };
   }, [data, loaded]);
   useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: "smooth" }); }, [chat, thinking]);
 
