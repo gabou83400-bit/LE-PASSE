@@ -775,17 +775,27 @@ function AppInner() {
     } catch {}
     setExported(true); setTimeout(() => setExported(false), 2000);
   };
+  const importInput = useRef(null);
   const importData = () => {
-    const txt = safePrompt("Colle ici le contenu d'une sauvegarde JSON (cela remplacera les données actuelles) :");
-    if (!txt) return;
-    try {
-      const parsed = JSON.parse(txt);
-      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.bottles)) throw new Error("format");
-      if (!safeConfirm("Restaurer cette sauvegarde ? Les données actuelles seront remplacées.")) return;
-      setData(sanitizeData(parsed, SEED));
-    } catch {
-      safeAlert("Sauvegarde illisible — vérifie que tu as collé le JSON complet.");
-    }
+    try { importInput.current?.click(); } catch {}
+  };
+  const handleImportFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onerror = () => safeAlert("Lecture du fichier impossible. Réessaie.");
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.bottles)) throw new Error("format");
+        if (!safeConfirm("Restaurer cette sauvegarde ? Les données actuelles de cet appareil seront remplacées.")) return;
+        setData(sanitizeData(parsed, SEED));
+        safeAlert("Sauvegarde restaurée. Tes données sont à jour sur cet appareil.");
+      } catch {
+        safeAlert("Fichier de sauvegarde illisible. Vérifie que c'est bien un fichier .json exporté depuis Le Passe.");
+      }
+    };
+    reader.readAsText(file);
+    if (importInput.current) importInput.current.value = "";
   };
 
   // ————— scan de facture —————
@@ -2047,11 +2057,12 @@ function AppInner() {
             <Title>Données</Title>
             <Card>
               <div style={{ fontSize: 13, color: C.sub, marginBottom: 10, lineHeight: 1.6 }}>
-                Les données vivent sur cet appareil. Exporte une sauvegarde régulièrement (texte JSON copié dans le presse-papiers, à coller dans une note ou un fichier).
+                Les données vivent sur cet appareil. « Exporter » télécharge un fichier de sauvegarde. « Restaurer » recharge un fichier exporté (utile pour transférer tes données vers un autre appareil).
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button onClick={exportData} style={btn("p")}>{exported ? "✓ Exportée (fichier + copie)" : "Exporter la sauvegarde"}</button>
                 <button onClick={importData} style={btn()}>Restaurer une sauvegarde</button>
+                <input ref={importInput} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={(e) => handleImportFile(e.target.files?.[0])} />
               </div>
             </Card>
           </div>
