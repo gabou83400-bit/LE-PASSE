@@ -324,6 +324,46 @@ function DayCheck({ done, onToggle, label }) {
   );
 }
 
+function TempChart({ points, type }) {
+  // points: [{ t: timestamp, v: value, label }] triés du plus ancien au plus récent
+  const W = 320, H = 150, padL = 30, padR = 10, padT = 12, padB = 22;
+  if (points.length < 2) {
+    return <div style={{ fontSize: 12.5, color: "#5C6B86", padding: "16px 4px" }}>Au moins 2 relevés sont nécessaires pour tracer la courbe.</div>;
+  }
+  const vals = points.map((p) => p.v);
+  const okMin = type === "congel" ? -30 : 0;
+  const okMax = type === "congel" ? -18 : 4;
+  const dataMin = Math.min(...vals, okMin);
+  const dataMax = Math.max(...vals, okMax);
+  const pad = (dataMax - dataMin) * 0.15 || 2;
+  const yMin = dataMin - pad, yMax = dataMax + pad;
+  const x = (i) => padL + (i / (points.length - 1)) * (W - padL - padR);
+  const y = (v) => padT + (1 - (v - yMin) / (yMax - yMin)) * (H - padT - padB);
+  const line = points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(p.v).toFixed(1)}`).join(" ");
+  const zoneTop = y(okMax), zoneBot = y(okMin);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+      {/* zone conforme */}
+      <rect x={padL} y={Math.min(zoneTop, zoneBot)} width={W - padL - padR} height={Math.abs(zoneBot - zoneTop)} fill="#E2F3EA" />
+      <line x1={padL} y1={y(okMax)} x2={W - padR} y2={y(okMax)} stroke="#1E9E6A" strokeWidth="0.8" strokeDasharray="3 3" />
+      {type !== "congel" && <line x1={padL} y1={y(okMin)} x2={W - padR} y2={y(okMin)} stroke="#1E9E6A" strokeWidth="0.8" strokeDasharray="3 3" />}
+      {/* axes labels */}
+      <text x={2} y={y(yMax) + 8} fontSize="8" fill="#5C6B86">{yMax.toFixed(0)}°</text>
+      <text x={2} y={y(yMin)} fontSize="8" fill="#5C6B86">{yMin.toFixed(0)}°</text>
+      {/* courbe */}
+      <path d={line} fill="none" stroke="#06B6D4" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      {/* points (rouge si hors zone) */}
+      {points.map((p, i) => {
+        const conform = type === "congel" ? p.v <= okMax : p.v >= okMin && p.v <= okMax;
+        return <circle key={i} cx={x(i)} cy={y(p.v)} r={2.6} fill={conform ? "#06B6D4" : "#D64A3B"} />;
+      })}
+      {/* premier et dernier label de date */}
+      <text x={padL} y={H - 6} fontSize="8" fill="#5C6B86">{points[0].label}</text>
+      <text x={W - padR} y={H - 6} fontSize="8" fill="#5C6B86" textAnchor="end">{points[points.length - 1].label}</text>
+    </svg>
+  );
+}
+
 function Gauge({ value, target }) {
   const w = Math.max(0, Math.min(100, value));
   const color = value >= target ? C.ok : value >= target - 10 ? C.warn : C.bad;
@@ -341,13 +381,20 @@ function Gauge({ value, target }) {
 }
 
 function AppInner() {
+  const teamMode = (() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return p.has("equipe") || p.has("team") || (window.location.hash || "").includes("equipe");
+    } catch { return false; }
+  })();
   const [data, setData] = useState(SEED);
   const [loaded, setLoaded] = useState(false);
-  const [tab, setTab] = useState("home");
+  const [tab, setTab] = useState(teamMode ? "hygiene" : "home");
   const [bottleForm, setBottleForm] = useState(null);
   const [recipeForm, setRecipeForm] = useState(null);
   const [recForm, setRecForm] = useState(null);
   const [tempForm, setTempForm] = useState({ equipId: "e1", value: "" });
+  const [chartEquip, setChartEquip] = useState("");
   const [orderOpen, setOrderOpen] = useState(false);
   const [stockSearch, setStockSearch] = useState("");
   const [invCounts, setInvCounts] = useState(null);
@@ -859,7 +906,7 @@ function AppInner() {
     fontWeight: v === "p" ? 700 : 600, letterSpacing: 0.2,
   });
 
-  const TABS = [
+  const ALL_TABS = [
     ["bord", "Tableau de bord", null],
     ["marges", "Marges", null],
     ["stocks", "Stocks", lowStock.length],
@@ -871,6 +918,7 @@ function AppInner() {
     ["assistant", "Assistant", null],
     ["reglages", "Réglages", null],
   ];
+  const TABS = teamMode ? ALL_TABS.filter((t) => t[0] === "hygiene") : ALL_TABS;
 
   const Kpi = ({ label, value, sub, status }) => (
     <div style={{ background: C.panelSolid, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 16px", flex: 1, minWidth: 130 }}>
@@ -885,16 +933,17 @@ function AppInner() {
       {/* entête tactile */}
       <div style={{ background: C.panelSolid, borderBottom: `1px solid ${C.line}`, position: "sticky", top: 0, zIndex: 20 }}>
         <div style={{ maxWidth: 980, margin: "0 auto", padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <button onClick={() => setTab("home")} style={{ display: "flex", alignItems: "center", gap: 10, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+          <button onClick={() => { if (!teamMode) setTab("home"); }} style={{ display: "flex", alignItems: "center", gap: 10, background: "none", border: "none", cursor: teamMode ? "default" : "pointer", padding: 0 }}>
             <span style={{ position: "relative", width: 34, height: 34, borderRadius: 9, background: "#fff", border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: C.brass }}>
               P
               <span style={{ position: "absolute", left: 13, top: 8, width: 5, height: 5, borderRadius: "50%", background: "#E8A33D" }} />
             </span>
             <span style={{ fontSize: 18, fontWeight: 800, color: C.ink, letterSpacing: -0.3 }}>Le Passe</span>
+            {teamMode && <span style={{ fontSize: 10, fontWeight: 700, color: "#06792B", background: "#CFF3FA", borderRadius: 20, padding: "3px 10px", letterSpacing: 0.5 }}>MODE ÉQUIPE</span>}
           </button>
           <span style={{ fontSize: 12, color: C.sub, textAlign: "right" }}>{barName}<br />{new Date().toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })}</span>
         </div>
-        {tab !== "home" && (
+        {(tab !== "home" || teamMode) && (
           <div style={{ maxWidth: 980, margin: "0 auto", padding: "0 8px", display: "flex", overflowX: "auto" }}>
             {TABS.map(([id, label, count]) => (
               <button key={id} onClick={() => setTab(id)} style={{
@@ -912,7 +961,7 @@ function AppInner() {
       </div>
 
       {/* ———————— ACCUEIL EN TUILES (façon caisse tactile) ———————— */}
-      {tab === "home" && (
+      {tab === "home" && !teamMode && (
         <div style={{ maxWidth: 980, margin: "0 auto", padding: "18px 16px 80px" }}>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
             <Kpi label="Valeur de cave" value={fmt0(caveValue)} sub={`${bottles.length} réf.`} />
@@ -1599,6 +1648,43 @@ function AppInner() {
               );
             })}
 
+            <Title>Courbe d'évolution</Title>
+            {(() => {
+              const eqWithData = equipments.filter((e) => temps.some((t) => t.equipId === e.id));
+              if (eqWithData.length === 0) {
+                return <div style={{ fontSize: 13, color: C.sub }}>Aucune donnée à tracer pour l'instant. Saisis quelques relevés et la courbe apparaîtra.</div>;
+              }
+              const sel = chartEquip && eqWithData.some((e) => e.id === chartEquip) ? chartEquip : eqWithData[0].id;
+              const eq = equipments.find((e) => e.id === sel);
+              const pts = temps
+                .filter((t) => t.equipId === sel)
+                .slice(0, 60)
+                .reverse()
+                .map((t) => ({
+                  v: t.value,
+                  t: new Date(t.date + "T" + (t.time || "12:00") + ":00").getTime(),
+                  label: new Date(t.date + "T12:00:00").toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }),
+                }));
+              return (
+                <Card>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                    {eqWithData.map((e) => (
+                      <button key={e.id} onClick={() => setChartEquip(e.id)} style={{
+                        ...btn(), padding: "6px 12px", fontSize: 12,
+                        background: sel === e.id ? "#CFF3FA" : "transparent",
+                        color: sel === e.id ? "#06792B" : C.sub,
+                        borderColor: sel === e.id ? "#06B6D4" : C.line, fontWeight: 600,
+                      }}>{e.name}{e.zone ? ` · ${e.zone}` : ""}</button>
+                    ))}
+                  </div>
+                  <TempChart points={pts} type={eq?.type} />
+                  <div style={{ fontSize: 11, color: C.sub, marginTop: 6, textAlign: "center" }}>
+                    Zone verte = conforme ({eq?.type === "congel" ? "≤ −18 °C" : "0 à +4 °C"}). Les points rouges sont hors norme.
+                  </div>
+                </Card>
+              );
+            })()}
+
             <Title>Historique des relevés</Title>
             {temps.length === 0 ? (
               <div style={{ color: C.sub, fontSize: 13 }}>Aucun relevé. L'historique horodaté sert de preuve en cas de contrôle sanitaire.</div>
@@ -1923,6 +2009,28 @@ function AppInner() {
                 style={{ ...btn("p"), marginBottom: 12, padding: "12px 16px" }}>Ajouter</button>
             </div>
 
+            <Title>Accès équipe</Title>
+            <Card>
+              <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.7, marginBottom: 10 }}>
+                Envoie ce lien à ton équipe : il ouvre l'appli directement sur l'onglet <b style={{ color: C.ink }}>Hygiène</b> (relevés de frigos, machines, nettoyage), sans accès aux marges, stocks ni réglages.
+              </div>
+              <button onClick={() => {
+                try {
+                  const base = window.location.origin + window.location.pathname;
+                  const link = base + "?equipe";
+                  navigator.clipboard.writeText(link);
+                  safeAlert("Lien équipe copié :\n" + link);
+                } catch { safeAlert("Ajoute ?equipe à la fin de l'adresse de l'appli pour le mode équipe."); }
+              }} style={btn("p")}>Copier le lien équipe</button>
+            </Card>
+
+            <Title>Bon à savoir</Title>
+            <Card>
+              <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.7 }}>
+                <b style={{ color: C.ink }}>Un appareil = ses propres données.</b> Pour l'hygiène et la traçabilité (preuves de contrôle), utilise <b style={{ color: C.ink }}>un seul appareil dédié</b> qui reste à l'établissement, afin que tout l'historique soit au même endroit.
+              </div>
+            </Card>
+
             <Title>Données</Title>
             <Card>
               <div style={{ fontSize: 13, color: C.sub, marginBottom: 10, lineHeight: 1.6 }}>
@@ -1937,7 +2045,7 @@ function AppInner() {
         )}
 
         <footer style={{ textAlign: "center", marginTop: 46, fontSize: 11, color: C.sub, letterSpacing: 0.8 }}>
-          Le Passe · v1.0 · données enregistrées sur cet appareil
+          Le Passe · v1.1 · données enregistrées sur cet appareil
         </footer>
       </div>
     </div>
