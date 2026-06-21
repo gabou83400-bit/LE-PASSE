@@ -2064,7 +2064,7 @@ function AppInner() {
         )}
 
         <footer style={{ textAlign: "center", marginTop: 46, fontSize: 11, color: C.sub, letterSpacing: 0.8 }}>
-          Le Passe · v1.1 · données enregistrées sur cet appareil
+          Le Passe · v1.2 · données enregistrées sur cet appareil
         </footer>
       </div>
     </div>
