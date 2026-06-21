@@ -450,16 +450,10 @@ function AppInner() {
             } catch {}
           }
           if (parsed) {
-            const mergeSeed = (saved = [], seed = []) => {
-              const keys = new Set(saved.map((x) => `${x.name}|${x.zone || ""}`));
-              return [...saved, ...seed.filter((s) => !keys.has(`${s.name}|${s.zone || ""}`))];
-            };
             const clean = sanitizeData(parsed, SEED);
-            setData({
-              ...clean,
-              equipments: mergeSeed(clean.equipments, SEED.equipments),
-              machines: mergeSeed(clean.machines, SEED.machines),
-            });
+            // On respecte STRICTEMENT les données enregistrées : pas de réinjection des
+            // équipements/machines par défaut (sinon une suppression ou un renommage "revient").
+            setData(clean);
           }
         }
       } catch {}
